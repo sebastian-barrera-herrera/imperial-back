@@ -15,11 +15,13 @@ import { DisbursementsModule } from './disbursements/disbursements.module';
 import { DocumentsModule } from './documents/documents.module';
 import { HealthController } from './health.controller';
 import { InvestmentsModule } from './investments/investments.module';
+import { IssuedDocumentsModule } from './issued-documents/issued-documents.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProfileModule } from './profile/profile.module';
 import { ReportsModule } from './reports/reports.module';
 import { StorageModule } from './storage/storage.module';
+import { StudioModule } from './studio/studio.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -44,6 +46,8 @@ import { UsersModule } from './users/users.module';
     InvestmentsModule,
     ReportsModule,
     ContentModule,
+    IssuedDocumentsModule,
+    StudioModule,
     AdminModule,
   ],
   controllers: [HealthController],

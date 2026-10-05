@@ -15,6 +15,9 @@ API REST de la plataforma de **gestión de casos y recuperación de capital** de
 | **Casos** | Etapas, línea de tiempo, documentos requeridos y aislamiento por abogado asignado. |
 | **Alertas** | Centro de notificaciones, preferencias por tipo, tiempo real por SSE, alertas manuales y masivas. |
 | **Capital e inversiones** | Oportunidades con **valor por unidad**, valoraciones, posiciones por cliente, rescates, portafolio con métricas (valor, ganancia, rentabilidad, anualizado, historial, distribución), simulador. |
+| **Documento de aprobación (PDF)** | El cliente (y el personal) descarga la constancia de aprobación de un desembolso aprobado: membrete con logo, marca de agua, monto en cifras y letras, partes, trámite, condiciones, firma y **código de verificación + QR**. Hay una verificación pública (`GET /api/public/verify`) que confirma el documento sin revelar datos personales y deja de validarlo si la solicitud se rechaza después. |
+| **Documentos del despacho** | El superadmin entrega documentos (contratos, constancias, resoluciones…) a un cliente; el cliente recibe una alerta y los ve en su cuenta. Se validan por contenido (PDF/JPG/PNG, 10 MB), con rastro de entrega, descarga y visto. |
+| **Editor de imágenes** | Solo superadmin y para **piezas gráficas propias**: el original se conserva inmutable, cada edición de texto es una versión nueva con su autor, fecha y huella SHA-256, y todo queda en la auditoría. |
 | **Contenido del sitio** | El superadmin edita el equipo y los testimonios de la web (textos, nombres, fotos, orden, publicar/ocultar). Cada alta o cambio de identidad exige **confirmar la autorización** de la persona y queda registrado. |
 | **Panel** | Estadísticas, usuarios y roles, reportes CSV, **auditoría**. |
 
@@ -68,6 +71,9 @@ Después arranca el front (`imperial-front`) en otra terminal.
 | Usuarios y roles, auditoría | – | – | ✅ |
 | Oportunidades, valoraciones, inversiones y rescates | ver y solicitar participar | – | gestionar |
 | Editar el contenido público (equipo, testimonios, fotos) | – | – | ✅ |
+| Descargar el PDF de aprobación de un desembolso | solo el suyo | ✅ | ✅ |
+| Entregar documentos a un cliente / ver lo entregado | solo ve lo suyo | – | ✅ |
+| Editor de imágenes | – | – | ✅ |
 | Reportes CSV de desembolsos, documentos y casos / de usuarios, capital, inversiones y auditoría | – | ✅ / – | ✅ / ✅ |
 
 No se puede cambiar el propio rol ni suspenderse, y siempre queda al menos un superadmin activo.
@@ -82,6 +88,18 @@ Cada oportunidad nace con un **valor por unidad de 100.0000**. El superadmin reg
 - Administración en `/api/admin/content/*` (solo superadmin): perfiles del equipo, testimonios, orden, fotos y carga del contenido de ejemplo (`POST /samples`).
 - **Autorización registrada:** crear un perfil o testimonio, cambiar la cita, el nombre o la foto, o reemplazar un ejemplo exige `authorized: true` (quién y cuándo queda guardado). Los ejemplos se publican rotulados como ilustrativos hasta que se reemplazan.
 - Fotos: JPG, PNG o WebP reales (se detectan por los primeros bytes; **sin SVG**), máx. 5 MB. Una foto solo es pública mientras la use un elemento publicado; al reemplazar o eliminar se borra si nadie más la usa, y las subidas que nunca se asocian se limpian a las 24 h.
+
+## Documento de aprobación y documentos del despacho
+
+- El PDF (`GET /api/disbursements/:id/approval-pdf`, o `/api/admin/disbursements/:id/approval-pdf` para el personal) existe solo para solicitudes **aprobadas** (o más avanzadas). Se genera con PDFKit usando los logos de `assets/brand/`. Solo imprime los últimos 4 dígitos de la cuenta y de la cédula.
+- El **código de verificación** es un HMAC (con `JWT_SECRET`) del número, monto, moneda, fecha de aprobación y cliente; el QR apunta a `${PUBLIC_SITE_URL}/verificar`. Define `PUBLIC_SITE_URL` (y, si quieres, `APP_TIMEZONE`) en producción.
+- **Los textos del PDF (condiciones y encabezados) son una redacción general: que los revise tu asesor jurídico** antes de usarlos con clientes.
+- Documentos del despacho: `POST /api/admin/clients/:id/issued-documents` (multipart, solo superadmin) y `GET /api/issued-documents` para el cliente.
+
+## Editor de imágenes
+
+- `/api/admin/studio/*` (solo superadmin). Sube un original, guarda versiones editadas y descárgalas; el original nunca se modifica.
+- Pensado para piezas propias del despacho (flyers, publicaciones, tarjetas). **No es una herramienta para modificar documentos, comprobantes o identificaciones de terceros**: no tiene acceso a los documentos de los clientes y cada versión y descarga queda registrada con las huellas del original y del resultado.
 
 ## Seguridad
 
@@ -102,7 +120,7 @@ npm test                      # TEST_DATABASE_URL para usar otra
 npm run typecheck
 ```
 
-43 pruebas e2e contra PostgreSQL real (auth, RBAC, cifrado, documentos, desembolsos, casos, inversiones, contenido del sitio, SSE) y pruebas puras de las fórmulas.
+82 pruebas e2e contra PostgreSQL real (auth, RBAC, cifrado, documentos, desembolsos, casos, inversiones, contenido del sitio, PDF de aprobación, documentos del despacho, editor de imágenes, SSE) y pruebas puras de las fórmulas.
 
 ## Despliegue
 

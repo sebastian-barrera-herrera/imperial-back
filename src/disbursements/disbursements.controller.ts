@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { DisbursementStatus, Role } from '@prisma/client';
 import { ArrayMaxSize, IsArray, IsEnum, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
-import { CurrentUser, Roles } from '../common/decorators';
+import { CurrentUser, Public, Roles } from '../common/decorators';
 import { toCsvFile } from '../common/csv';
 import { PageQuery, pageArgs, paged } from '../common/pagination';
 import { AuthUser } from '../common/types';
@@ -70,6 +70,12 @@ export class DisbursementsController {
     return this.service.detail(user.id, id);
   }
 
+  /** Documento de aprobación en PDF (con logo, marca de agua y código de verificación). */
+  @Get(':id/approval-pdf')
+  approvalPdf(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.approvalPdf(user, id);
+  }
+
   @Post(':id/cancel') @HttpCode(200)
   cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.cancel(user, id);
@@ -98,9 +104,31 @@ export class AdminDisbursementsController {
     return this.service.detail(null, id);
   }
 
+  @Get(':id/approval-pdf')
+  approvalPdf(@CurrentUser() actor: AuthUser, @Param('id') id: string) {
+    return this.service.approvalPdf(actor, id);
+  }
+
   @Patch(':id/status')
   async setStatus(@CurrentUser() actor: AuthUser, @Param('id') id: string, @Body() dto: StatusDto) {
     await this.service.transition(actor, id, dto.status, dto.note);
     return this.service.detail(null, id);
+  }
+}
+
+class VerifyQuery {
+  @IsString() @MaxLength(40) ref: string;
+  @IsString() @MaxLength(40) code: string;
+}
+
+/** Verificación pública de un documento de aprobación (la usa la página /verificar y el QR del PDF). */
+@Controller('public/verify')
+@Public()
+export class VerifyController {
+  constructor(private readonly service: DisbursementsService) {}
+
+  @Get()
+  verify(@Query() q: VerifyQuery) {
+    return this.service.verifyApproval(q.ref, q.code);
   }
 }

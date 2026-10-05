@@ -114,6 +114,8 @@ model User {
   interests     OpportunityInterest[]
   investments   Investment[]
   auditLogs     AuditLog[]
+  issuedToMe    IssuedDocument[]        @relation("IssuedTo")
+  issuedByMe    IssuedDocument[]        @relation("IssuedBy")
 }
 
 model Profile {
@@ -231,6 +233,7 @@ model Case {
   events        CaseEvent[]
   documents     Document[]
   disbursements DisbursementRequest[]
+  issuedDocs    IssuedDocument[]
 
   @@index([clientId])
   @@index([lawyerId])
@@ -424,4 +427,76 @@ model Testimonial {
   updatedAt    DateTime      @updatedAt
 
   @@index([sortOrder])
+}
+
+// ───────────── Documentos que el despacho entrega al cliente ─────────────
+
+enum IssuedDocumentCategory {
+  CONTRACT
+  RESOLUTION
+  CERTIFICATE
+  INVOICE
+  REPORT
+  OTHER
+}
+
+model IssuedDocument {
+  id           String                 @id @default(cuid())
+  clientId     String
+  client       User                   @relation("IssuedTo", fields: [clientId], references: [id], onDelete: Cascade)
+  uploadedById String?
+  uploadedBy   User?                  @relation("IssuedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  caseId       String?
+  case         Case?                  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  title        String
+  description  String?
+  category     IssuedDocumentCategory @default(OTHER)
+  originalName String
+  storageKey   String
+  mimeType     String
+  size         Int
+  sha256       String
+  /// Primera vez que el cliente lo abrió/descargó.
+  viewedAt     DateTime?
+  createdAt    DateTime               @default(now())
+
+  @@index([clientId, createdAt])
+}
+
+// ───────────── Editor de imágenes (piezas gráficas propias del despacho) ─────────────
+
+/// El original es inmutable: las ediciones se guardan como versiones aparte.
+model StudioImage {
+  id             String          @id @default(cuid())
+  title          String
+  originalName   String
+  originalKey    String
+  originalMime   String
+  originalSize   Int
+  originalSha256 String
+  createdById    String?
+  createdByEmail String?
+  createdAt      DateTime        @default(now())
+  versions       StudioVersion[]
+
+  @@index([createdAt])
+}
+
+model StudioVersion {
+  id             String      @id @default(cuid())
+  imageId        String
+  image          StudioImage @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  version        Int
+  label          String
+  key            String
+  mime           String
+  size           Int
+  sha256         String
+  /// Lista de ediciones de texto aplicadas (cajas, textos y estilo) para poder reproducirlas.
+  edits          Json
+  createdById    String?
+  createdByEmail String?
+  createdAt      DateTime    @default(now())
+
+  @@unique([imageId, version])
 }

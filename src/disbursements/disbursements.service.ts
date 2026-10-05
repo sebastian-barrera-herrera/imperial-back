@@ -1,10 +1,13 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, StreamableFile, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DisbursementStatus, DocumentStatus, Prisma, Role, UserStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { CryptoService } from '../common/crypto.service';
 import { AuthUser } from '../common/types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { renderApprovalPdf } from './approval-pdf';
+import { codesMatch, verificationCode } from './verification';
 
 export const STATUS_LABELS: Record<DisbursementStatus, string> = {
   PENDING: 'Pendiente',
@@ -38,6 +41,7 @@ export class DisbursementsService {
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
+    private readonly crypto: CryptoService,
   ) {}
 
   async create(user: AuthUser, dto: { amount: number; concept: string; caseId?: string; documentIds?: string[] }) {
@@ -186,5 +190,84 @@ export class DisbursementsService {
       this.prisma.disbursementRequest.count({ where }),
     ]);
     return { items, total };
+  }
+
+  // ───────────── Documento de aprobación (PDF) ─────────────
+
+  /** El PDF solo existe para solicitudes aprobadas (o más avanzadas): es la constancia de la aprobación. */
+  private static readonly APPROVED_STATES: DisbursementStatus[] = ['APPROVED', 'IN_PROCESS', 'DISBURSED'];
+
+  private async approvalSubject(id: string, clientId: string | null) {
+    const request = await this.prisma.disbursementRequest.findFirst({
+      where: { id, ...(clientId ? { clientId } : {}) },
+      include: {
+        events: { orderBy: { createdAt: 'asc' } },
+        case: { select: { number: true } },
+        client: { select: { id: true, fullName: true, email: true, profile: { select: { cedulaEnc: true } } } },
+      },
+    });
+    if (!request) throw new NotFoundException('Solicitud no encontrada');
+    if (!DisbursementsService.APPROVED_STATES.includes(request.status)) {
+      throw new ConflictException('El documento de aprobación solo está disponible para solicitudes aprobadas');
+    }
+    const approval = request.events.find((e) => e.toStatus === 'APPROVED');
+    if (!approval) throw new ConflictException('La solicitud no tiene registrada su aprobación');
+    const code = verificationCode(this.config.getOrThrow<string>('JWT_SECRET'), {
+      reference: request.code, amount: request.amount.toFixed(2), currency: request.currency, approvedAt: approval.createdAt, clientId: request.clientId,
+    });
+    return { request, approval, code };
+  }
+
+  async approvalPdf(user: AuthUser, id: string) {
+    const { request, approval, code } = await this.approvalSubject(id, user.role === Role.CLIENT ? user.id : null);
+    const site = (this.config.get<string>('PUBLIC_SITE_URL') ?? 'http://localhost:3000').replace(/\/+$/, '');
+    let idMasked: string | null = null;
+    const enc = request.client.profile?.cedulaEnc;
+    if (enc) {
+      try {
+        const plain = this.crypto.decrypt(enc);
+        idMasked = plain.length > 4 ? `${'•'.repeat(Math.min(plain.length - 4, 8))}${plain.slice(-4)}` : null;
+      } catch {
+        idMasked = null;
+      }
+    }
+    const buffer = await renderApprovalPdf({
+      reference: request.code,
+      issuedAt: new Date(),
+      requestedAt: request.createdAt,
+      approvedAt: approval.createdAt,
+      approvedBy: approval.actorName,
+      statusLabel: STATUS_LABELS[request.status],
+      amount: Number(request.amount),
+      currency: request.currency,
+      concept: request.concept,
+      beneficiary: { name: request.client.fullName, email: request.client.email, idMasked },
+      bank: { name: request.bankName, last4: request.accountLast4 },
+      caseNumber: request.case?.number,
+      events: request.events.map((e) => ({ at: e.createdAt, status: STATUS_LABELS[e.toStatus], note: e.note, by: e.actorName })),
+      verification: { code, url: `${site}/verificar?ref=${encodeURIComponent(request.code)}&code=${code}` },
+      timeZone: this.config.get<string>('APP_TIMEZONE') ?? 'UTC',
+    });
+    if (user.role !== Role.CLIENT) {
+      await this.audit.log({ actor: user, action: 'DISBURSEMENT_APPROVAL_PDF_DOWNLOADED', entity: 'DisbursementRequest', entityId: request.id, metadata: { code: request.code } });
+    }
+    return new StreamableFile(buffer, { type: 'application/pdf', length: buffer.length, disposition: `attachment; filename="Aprobacion-${request.code}.pdf"` });
+  }
+
+  /** Comprobación pública (sin sesión) de un documento: solo devuelve datos mínimos, nunca el nombre completo. */
+  async verifyApproval(reference: string, code: string) {
+    const request = await this.prisma.disbursementRequest.findUnique({ where: { code: reference.trim().toUpperCase() }, select: { id: true } });
+    if (request) {
+      try {
+        const { request: r, approval, code: expected } = await this.approvalSubject(request.id, null);
+        if (codesMatch(code, expected)) {
+          const initials = r.client.fullName.split(/\s+/).filter(Boolean).slice(0, 3).map((w) => `${w[0].toUpperCase()}.`).join(' ');
+          return { valid: true, reference: r.code, status: STATUS_LABELS[r.status], amount: r.amount.toFixed(2), currency: r.currency, approvedAt: approval.createdAt, beneficiary: initials };
+        }
+      } catch {
+        // Solicitud sin aprobación vigente (rechazada/cancelada/pendiente): se informa igual que un código inválido.
+      }
+    }
+    return { valid: false };
   }
 }
