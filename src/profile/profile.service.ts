@@ -24,6 +24,7 @@ export class ProfileService {
       phone: profile?.phone ?? null,
       address: profile?.address ?? null,
       city: profile?.city ?? null,
+      country: profile?.country ?? null,
       bankName: profile?.bankName ?? null,
       accountType: profile?.accountType ?? null,
       accountNumberMasked: profile?.accountLast4 ? `••••${profile.accountLast4}` : null,
@@ -46,6 +47,7 @@ export class ProfileService {
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.city !== undefined) data.city = dto.city;
+    if (dto.country !== undefined) data.country = dto.country;
     if (dto.bankName !== undefined) data.bankName = dto.bankName;
     if (dto.accountType !== undefined) data.accountType = dto.accountType;
     if (dto.accountNumber) {

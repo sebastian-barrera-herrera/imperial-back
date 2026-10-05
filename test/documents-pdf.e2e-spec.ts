@@ -56,13 +56,63 @@ describe('Documento de aprobación (PDF) y documentos del despacho', () => {
 
   // ───────────── PDF de aprobación ─────────────
   describe('PDF de aprobación', () => {
+    const docUrl = () => `/api/admin/disbursements/${requestId}/approval-document`;
+    const fields = {
+      issuerName: 'Imperial Law Group, P.A. — Departamento de Desembolsos', signerName: 'Dra. Elena Marín', signerTitle: 'Socia directora',
+      financialEntity: 'Banco de Crédito del Perú', accountLast4: '4455', requestDate: '', issuePlace: 'Miami, Florida, EE. UU.', notes: 'Pago sujeto a verificación de la entidad receptora.',
+    };
+    const codeOf = async (current: Record<string, unknown>) => {
+      const row = await prisma.disbursementRequest.findUniqueOrThrow({ where: { id: requestId }, include: { events: true } });
+      const approvedAt = row.events.find((e) => e.toStatus === 'APPROVED')!.createdAt;
+      return verificationCode(process.env.JWT_SECRET!, { reference: 'DES-000001', amount: '12500.50', currency: 'USD', approvedAt, clientId, fields: current as never });
+    };
+
     it('no existe mientras la solicitud no esté aprobada', async () => {
       await client.get(`/api/disbursements/${requestId}/approval-pdf`).expect(409);
       await lawyer.get(`/api/admin/disbursements/${requestId}/approval-pdf`).expect(409);
+      await root.put(docUrl()).send({ ...fields, requestDate: '2026-01-01' }).expect(409); // aún no aprobada
     });
 
-    it('el cliente dueño descarga un PDF real; otros usuarios y visitantes no', async () => {
+    it('aprobada pero sin habilitar: el cliente no puede descargarlo; el personal ve un borrador sellado', async () => {
       await lawyer.patch(`/api/admin/disbursements/${requestId}/status`).send({ status: 'APPROVED', note: 'Documentación completa y verificada' }).expect(200);
+      await client.get(`/api/disbursements/${requestId}/approval-pdf`).expect(409);
+      expect((await client.get(`/api/disbursements/${requestId}`).expect(200)).body.approvalPdfAvailable).toBe(false);
+
+      const draft = await binary(lawyer, `/api/admin/disbursements/${requestId}/approval-pdf`).expect(200);
+      expect(draft.headers['content-disposition']).toContain('Borrador-Aprobacion-DES-000001.pdf');
+      expect(pdfToText(draft.body as Buffer)).toContain('BORRADOR');
+    });
+
+    it('solo el superadmin define los datos; el personal los consulta; se validan fechas y campos', async () => {
+      const view = (await lawyer.get(docUrl()).expect(200)).body;
+      expect(view).toMatchObject({ eligible: true, configured: false, released: false });
+      expect(view.defaults).toMatchObject({ issuerName: 'Imperial Law Group — Equipo jurídico', financialEntity: 'Bancolombia', accountLast4: '9012', issuePlace: 'Miami, Florida, EE. UU.' });
+      expect(view.fields).toEqual(view.defaults); // sin configurar: se usan los valores por defecto
+      fields.requestDate = view.approvedOn; // la fecha de solicitud no puede ser posterior a la aprobación
+
+      await lawyer.put(docUrl()).send(fields).expect(403);
+      await client.put(docUrl()).send(fields).expect(403);
+      await root.put(docUrl()).send({ ...fields, requestDate: '2999-01-01' }).expect(400); // posterior a la aprobación
+      await root.put(docUrl()).send({ ...fields, requestDate: '2026-02-30' }).expect(400); // fecha inexistente
+      await root.put(docUrl()).send({ ...fields, accountLast4: '12' }).expect(400);
+      await root.put(docUrl()).send({ ...fields, issuerName: '' }).expect(400);
+      await root.put(docUrl()).send({ ...fields, extra: 'x' }).expect(400);
+      await root.post(`${docUrl()}/release`).expect(409); // primero hay que guardar los datos
+
+      const saved = (await root.put(docUrl()).send(fields).expect(200)).body;
+      expect(saved).toMatchObject({ configured: true, released: false, updatedBy: 'root@example.com', fields });
+      expect((await prisma.auditLog.findFirst({ where: { action: 'DISBURSEMENT_DOC_UPDATED' } }))?.metadata).toMatchObject({ changed: expect.arrayContaining(['issuerName', 'financialEntity']) });
+    });
+
+    it('al habilitarlo el cliente recibe una alerta y descarga el PDF con los datos definidos', async () => {
+      await lawyer.post(`${docUrl()}/release`).expect(403);
+      const released = (await root.post(`${docUrl()}/release`).expect(200)).body;
+      expect(released).toMatchObject({ released: true, releasedBy: 'root@example.com' });
+      await root.post(`${docUrl()}/release`).expect(409);
+
+      const alerts = (await client.get('/api/notifications').expect(200)).body.items;
+      expect(alerts.find((n: { title: string }) => n.title === 'Tu documento de aprobación está disponible')).toMatchObject({ type: 'DISBURSEMENT', link: `/dashboard/desembolsos/${requestId}` });
+      expect((await client.get(`/api/disbursements/${requestId}`).expect(200)).body.approvalPdfAvailable).toBe(true);
 
       const res = await binary(client, `/api/disbursements/${requestId}/approval-pdf`).expect(200);
       expect(res.headers['content-type']).toContain('application/pdf');
@@ -71,53 +121,60 @@ describe('Documento de aprobación (PDF) y documentos del despacho', () => {
       expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
       expect(pdf.length).toBeGreaterThan(20_000); // logo, marca de agua y QR incrustados
       expect(pdf.subarray(-6).toString()).toContain('%%EOF');
-
       if (process.env.SAVE_PDF) copyFileSync(writeTemp(pdf), process.env.SAVE_PDF);
+
       const text = pdfToText(pdf)?.replace(/\s+/g, ' ') ?? null;
       if (text) {
-        for (const expected of ['DOCUMENTO DE APROBACIÓN DE DESEMBOLSO', 'DES-000001', 'Carlos Cliente Pérez', 'USD 12,500.50', 'DOCE MIL QUINIENTOS DÓLARES DE LOS ESTADOS UNIDOS DE AMÉRICA CON 50/100', 'Bancolombia', '9012', '7890', 'Página 1 de 1', 'Verificación']) {
+        for (const expected of ['DOCUMENTO DE APROBACIÓN DE DESEMBOLSO', 'DES-000001', 'Carlos Cliente Pérez', 'USD 12,500.50', 'DOCE MIL QUINIENTOS DÓLARES DE LOS ESTADOS UNIDOS DE AMÉRICA CON 50/100',
+          'Imperial Law Group, P.A. — Departamento de Desembolsos', 'Banco de Crédito del Perú', '4455', 'Miami, Florida, EE. UU.', 'Dra. Elena Marín', 'Socia directora', 'Observaciones: Pago sujeto a verificación', '7890', 'Página 1 de 1']) {
           expect(text).toContain(expected);
         }
+        expect(text).not.toContain('BORRADOR');
         expect(text).not.toContain('1234567890'); // la cédula completa nunca se imprime
         expect(text).not.toContain('123-456-789-012');
+        expect(text).not.toContain('Bancolombia'); // se usa la entidad que definió el superadmin
       }
 
       await stranger.get(`/api/disbursements/${requestId}/approval-pdf`).expect(404);
       await anon().get(`/api/disbursements/${requestId}/approval-pdf`).expect(401);
-
       const staff = await binary(lawyer, `/api/admin/disbursements/${requestId}/approval-pdf`).expect(200);
-      expect((staff.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
-      const audit = await prisma.auditLog.findFirst({ where: { action: 'DISBURSEMENT_APPROVAL_PDF_DOWNLOADED' } });
-      expect(audit).toMatchObject({ entityId: requestId, actorEmail: 'abogado@example.com' });
-
+      expect(staff.headers['content-disposition']).toContain('filename="Aprobacion-DES-000001.pdf"');
+      expect((await prisma.auditLog.findFirst({ where: { action: 'DISBURSEMENT_APPROVAL_PDF_DOWNLOADED' } }))).toMatchObject({ entityId: requestId, actorEmail: 'abogado@example.com' });
     });
 
-    it('la verificación pública confirma el documento sin revelar datos personales y rechaza códigos falsos', async () => {
-      const row = await prisma.disbursementRequest.findUniqueOrThrow({ where: { id: requestId }, include: { events: true } });
-      const approvedAt = row.events.find((e) => e.toStatus === 'APPROVED')!.createdAt;
-      const code = verificationCode(process.env.JWT_SECRET!, { reference: 'DES-000001', amount: '12500.50', currency: 'USD', approvedAt, clientId });
+    it('la verificación pública cubre los datos del documento: confirma lo habilitado y rechaza lo alterado', async () => {
+      const code = await codeOf(fields);
       expect(code).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/);
-
       const ok = await anon().get('/api/public/verify').query({ ref: 'DES-000001', code }).expect(200);
-      expect(ok.body).toMatchObject({ valid: true, reference: 'DES-000001', status: 'Aprobada', amount: '12500.50', currency: 'USD', beneficiary: 'C. C. P.' });
+      expect(ok.body).toMatchObject({ valid: true, reference: 'DES-000001', status: 'Aprobada', amount: '12500.50', currency: 'USD', beneficiary: 'C. C. P.', issuer: fields.issuerName, financialEntity: fields.financialEntity, requestDate: fields.requestDate });
       expect(JSON.stringify(ok.body)).not.toContain('Carlos');
       expect(JSON.stringify(ok.body)).not.toContain('example.com');
       await anon().get('/api/public/verify').query({ ref: 'des-000001', code: code.toLowerCase() }).expect(200).expect((r) => expect(r.body.valid).toBe(true));
 
       for (const query of [{ ref: 'DES-000001', code: 'AAAA-BBBB-CCCC-DDDD' }, { ref: 'DES-999999', code }, { ref: 'DES-000001', code: code.replace(/.$/, code.endsWith('0') ? '1' : '0') }]) {
-        const bad = await anon().get('/api/public/verify').query(query).expect(200);
-        expect(bad.body).toEqual({ valid: false });
+        expect((await anon().get('/api/public/verify').query(query).expect(200)).body).toEqual({ valid: false });
       }
       await anon().get('/api/public/verify').expect(400);
+
+      // Cambiar un dato del documento cambia el código: el PDF descargado antes deja de verificarse y el nuevo sí.
+      const edited = { ...fields, financialEntity: 'Banco Pichincha' };
+      await root.put(docUrl()).send(edited).expect(200);
+      expect((await anon().get('/api/public/verify').query({ ref: 'DES-000001', code }).expect(200)).body).toEqual({ valid: false });
+      expect((await anon().get('/api/public/verify').query({ ref: 'DES-000001', code: await codeOf(edited) }).expect(200)).body).toMatchObject({ valid: true, financialEntity: 'Banco Pichincha' });
+      Object.assign(fields, edited);
     });
 
-    it('si la solicitud se rechaza después, el documento deja de ser válido', async () => {
+    it('retirar el documento lo quita al cliente y lo vuelve no verificable; si se rechaza después, tampoco es válido', async () => {
+      await lawyer.post(`${docUrl()}/withdraw`).expect(403);
+      await root.post(`${docUrl()}/withdraw`).expect(200);
+      await root.post(`${docUrl()}/withdraw`).expect(409);
+      await client.get(`/api/disbursements/${requestId}/approval-pdf`).expect(409);
+      expect((await anon().get('/api/public/verify').query({ ref: 'DES-000001', code: await codeOf(fields) }).expect(200)).body).toEqual({ valid: false });
+
+      await root.post(`${docUrl()}/release`).expect(200);
+      expect((await anon().get('/api/public/verify').query({ ref: 'DES-000001', code: await codeOf(fields) }).expect(200)).body.valid).toBe(true);
       await lawyer.patch(`/api/admin/disbursements/${requestId}/status`).send({ status: 'REJECTED', note: 'Se detectó una inconsistencia' }).expect(200);
-      const row = await prisma.disbursementRequest.findUniqueOrThrow({ where: { id: requestId }, include: { events: true } });
-      const approvedAt = row.events.find((e) => e.toStatus === 'APPROVED')!.createdAt;
-      const code = verificationCode(process.env.JWT_SECRET!, { reference: 'DES-000001', amount: '12500.50', currency: 'USD', approvedAt, clientId });
-      const res = await anon().get('/api/public/verify').query({ ref: 'DES-000001', code }).expect(200);
-      expect(res.body).toEqual({ valid: false });
+      expect((await anon().get('/api/public/verify').query({ ref: 'DES-000001', code: await codeOf(fields) }).expect(200)).body).toEqual({ valid: false });
       await client.get(`/api/disbursements/${requestId}/approval-pdf`).expect(409);
     });
   });

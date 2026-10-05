@@ -1,11 +1,28 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { DisbursementStatus, Role } from '@prisma/client';
-import { ArrayMaxSize, IsArray, IsEnum, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { ArrayMaxSize, IsArray, IsEnum, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CurrentUser, Public, Roles } from '../common/decorators';
 import { toCsvFile } from '../common/csv';
 import { PageQuery, pageArgs, paged } from '../common/pagination';
 import { AuthUser } from '../common/types';
 import { DisbursementsService, STATUS_LABELS } from './disbursements.service';
+
+const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
+/** Un campo opcional vacío cuenta como «sin valor». */
+const emptyToUndefined = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() || undefined : value);
+
+/** Datos que figuran en el documento de aprobación; los define el superadmin. */
+class ApprovalDocumentDto {
+  @Transform(trim) @IsString() @Length(2, 160) issuerName: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsString() @MaxLength(120) signerName?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsString() @MaxLength(120) signerTitle?: string;
+  @Transform(trim) @IsString() @Length(2, 120) financialEntity: string;
+  @IsOptional() @Transform(emptyToUndefined) @Matches(/^\d{4}$/, { message: 'Indica los últimos 4 dígitos de la cuenta' }) accountLast4?: string;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'La fecha de solicitud debe tener el formato AAAA-MM-DD' }) requestDate: string;
+  @Transform(trim) @IsString() @Length(2, 120) issuePlace: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsString() @MaxLength(600) notes?: string;
+}
 
 class CreateDisbursementDto {
   @IsNumber({ maxDecimalPlaces: 2 }) @Min(1) @Max(999_999_999_999)
@@ -107,6 +124,27 @@ export class AdminDisbursementsController {
   @Get(':id/approval-pdf')
   approvalPdf(@CurrentUser() actor: AuthUser, @Param('id') id: string) {
     return this.service.approvalPdf(actor, id);
+  }
+
+  /** Datos del documento de aprobación y estado de su habilitación (el personal los ve; solo el superadmin los cambia). */
+  @Get(':id/approval-document')
+  approvalDocument(@Param('id') id: string) {
+    return this.service.approvalDocumentView(id);
+  }
+
+  @Put(':id/approval-document') @Roles(Role.SUPERADMIN)
+  saveApprovalDocument(@CurrentUser() actor: AuthUser, @Param('id') id: string, @Body() dto: ApprovalDocumentDto) {
+    return this.service.saveApprovalDocument(actor, id, dto);
+  }
+
+  @Post(':id/approval-document/release') @HttpCode(200) @Roles(Role.SUPERADMIN)
+  releaseApprovalDocument(@CurrentUser() actor: AuthUser, @Param('id') id: string) {
+    return this.service.setApprovalRelease(actor, id, true);
+  }
+
+  @Post(':id/approval-document/withdraw') @HttpCode(200) @Roles(Role.SUPERADMIN)
+  withdrawApprovalDocument(@CurrentUser() actor: AuthUser, @Param('id') id: string) {
+    return this.service.setApprovalRelease(actor, id, false);
   }
 
   @Patch(':id/status')

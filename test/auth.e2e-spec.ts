@@ -93,7 +93,10 @@ describe('Auth y RBAC', () => {
     const root = await login(app, 'root-rbac@example.com');
     await root.patch(`/api/admin/users/${user.id}`).send({ status: 'SUSPENDED' }).expect(200);
     await victim.get('/api/auth/me').expect(401);
-    await request(app.getHttpServer()).post('/api/auth/login').send({ email: 'suspendido@example.com', password: PASSWORD }).expect(401);
+    // Con la contraseña correcta recibe un aviso claro de que su acceso fue desactivado; con una incorrecta, el mensaje genérico.
+    const blocked = await request(app.getHttpServer()).post('/api/auth/login').send({ email: 'suspendido@example.com', password: PASSWORD }).expect(403);
+    expect(blocked.body.message).toContain('desactivado');
+    await request(app.getHttpServer()).post('/api/auth/login').send({ email: 'suspendido@example.com', password: 'Incorrecta123' }).expect(401);
   });
 
   it('el superadmin gestiona usuarios pero no puede dejar el sistema sin superadmin', async () => {

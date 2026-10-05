@@ -130,6 +130,8 @@ export class UsersController {
 
 class ClientsQuery extends PageQuery {
   @IsOptional() @IsString() search?: string;
+  /** ACTIVE = con acceso; SUSPENDED = dados de baja. */
+  @IsOptional() @IsEnum(UserStatus) status?: UserStatus;
 }
 
 /** Consulta de clientes para el personal (superadmin y abogados). */
@@ -147,6 +149,7 @@ export class StaffDirectoryController {
     const { page, pageSize, skip, take } = pageArgs(q);
     const where: Prisma.UserWhereInput = {
       role: Role.CLIENT,
+      ...(q.status ? { status: q.status } : {}),
       ...(q.search
         ? { OR: [{ email: { contains: q.search, mode: 'insensitive' } }, { fullName: { contains: q.search, mode: 'insensitive' } }] }
         : {}),
@@ -158,14 +161,21 @@ export class StaffDirectoryController {
         skip,
         take,
         select: {
-          id: true, fullName: true, email: true, status: true, createdAt: true,
+          id: true, fullName: true, email: true, status: true, createdAt: true, deactivatedAt: true, deactivationReason: true,
+          profile: { select: { country: true, phone: true } },
+          advisor: { select: { id: true, fullName: true } },
           _count: { select: { clientCases: true, disbursements: true } },
           documents: { where: { status: DocumentStatus.PENDING }, select: { id: true } },
         },
       }),
       this.prisma.user.count({ where }),
     ]);
-    const items = rows.map(({ documents, _count, ...u }) => ({ ...u, cases: _count.clientCases, disbursements: _count.disbursements, pendingDocuments: documents.length }));
+    const sums = await this.prisma.clientDeposit.groupBy({ by: ['clientId'], where: { clientId: { in: rows.map((r) => r.id) } }, _sum: { amount: true } });
+    const deposited = new Map(sums.map((x) => [x.clientId, x._sum.amount?.toFixed(2) ?? '0.00']));
+    const items = rows.map(({ documents, _count, profile, ...u }) => ({
+      ...u, country: profile?.country ?? null, phone: profile?.phone ?? null,
+      cases: _count.clientCases, disbursements: _count.disbursements, pendingDocuments: documents.length, depositTotal: deposited.get(u.id) ?? '0.00',
+    }));
     return paged(items, total, page, pageSize);
   }
 
@@ -175,7 +185,8 @@ export class StaffDirectoryController {
     if (!user) throw new NotFoundException('Cliente no encontrado');
     // El acceso a datos sensibles (cédula, banco) queda auditado.
     await this.audit.log({ actor, action: 'CLIENT_PROFILE_VIEWED', entity: 'Profile', entityId: id });
-    return { ...this.profiles.present(user, user.profile), status: user.status, createdAt: user.createdAt };
+    const advisor = user.advisorId ? await this.prisma.user.findUnique({ where: { id: user.advisorId }, select: { id: true, fullName: true } }) : null;
+    return { ...this.profiles.present(user, user.profile), status: user.status, createdAt: user.createdAt, deactivatedAt: user.deactivatedAt, deactivationReason: user.deactivationReason, advisor };
   }
 
   @Get('lawyers')

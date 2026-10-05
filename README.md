@@ -15,7 +15,10 @@ API REST de la plataforma de **gestión de casos y recuperación de capital** de
 | **Casos** | Etapas, línea de tiempo, documentos requeridos y aislamiento por abogado asignado. |
 | **Alertas** | Centro de notificaciones, preferencias por tipo, tiempo real por SSE, alertas manuales y masivas. |
 | **Capital e inversiones** | Oportunidades con **valor por unidad**, valoraciones, posiciones por cliente, rescates, portafolio con métricas (valor, ganancia, rentabilidad, anualizado, historial, distribución), simulador. |
-| **Documento de aprobación (PDF)** | El cliente (y el personal) descarga la constancia de aprobación de un desembolso aprobado: membrete con logo, marca de agua, monto en cifras y letras, partes, trámite, condiciones, firma y **código de verificación + QR**. Hay una verificación pública (`GET /api/public/verify`) que confirma el documento sin revelar datos personales y deja de validarlo si la solicitud se rechaza después. |
+| **Documento de aprobación (PDF)** | El **superadmin define sus datos** (emisor, entidad financiera, fecha de solicitud, firmante, lugar, observaciones) y **lo habilita**; solo entonces el cliente puede descargarlo (el personal ve un borrador sellado). Contiene: membrete con logo, marca de agua, monto en cifras y letras, partes, trámite, condiciones, firma y **código de verificación + QR**. Hay una verificación pública (`GET /api/public/verify`) que confirma el documento sin revelar datos personales y deja de validarlo si la solicitud se rechaza después. |
+| **Clientes** | Lista con datos (país, teléfono, asesor, total depositado, estado). El superadmin **da de baja** (pierde el acceso al instante, se cierran sus sesiones y se conservan sus datos) y **reactiva**; al intentar entrar el cliente recibe un aviso claro. |
+| **Asesor profesional** | El superadmin asigna un abogado o superadmin a cada cliente y este ve su nombre en su panel (si no hay asignado, el abogado de su caso abierto). |
+| **Depósitos** | El superadmin registra los depósitos del cliente (monto, fecha, referencia bancaria, nota); el cliente ve el total y su historial. Alta, corrección y baja quedan auditadas con los valores anteriores. |
 | **Documentos del despacho** | El superadmin entrega documentos (contratos, constancias, resoluciones…) a un cliente; el cliente recibe una alerta y los ve en su cuenta. Se validan por contenido (PDF/JPG/PNG, 10 MB), con rastro de entrega, descarga y visto. |
 | **Editor de imágenes** | Solo superadmin y para **piezas gráficas propias**: el original se conserva inmutable, cada edición de texto es una versión nueva con su autor, fecha y huella SHA-256, y todo queda en la auditoría. |
 | **Contenido del sitio** | El superadmin edita el equipo y los testimonios de la web (textos, nombres, fotos, orden, publicar/ocultar). Cada alta o cambio de identidad exige **confirmar la autorización** de la persona y queda registrado. |
@@ -73,6 +76,9 @@ Después arranca el front (`imperial-front`) en otra terminal.
 | Editar el contenido público (equipo, testimonios, fotos) | – | – | ✅ |
 | Descargar el PDF de aprobación de un desembolso | solo el suyo | ✅ | ✅ |
 | Entregar documentos a un cliente / ver lo entregado | solo ve lo suyo | – | ✅ |
+| Definir y habilitar el documento de aprobación | – | solo lo consulta | ✅ |
+| Dar de baja / reactivar clientes, asignar asesor, registrar depósitos | – | – | ✅ |
+| Ver su asesor y sus depósitos | ✅ | – | – |
 | Editor de imágenes | – | – | ✅ |
 | Reportes CSV de desembolsos, documentos y casos / de usuarios, capital, inversiones y auditoría | – | ✅ / – | ✅ / ✅ |
 
@@ -91,8 +97,8 @@ Cada oportunidad nace con un **valor por unidad de 100.0000**. El superadmin reg
 
 ## Documento de aprobación y documentos del despacho
 
-- El PDF (`GET /api/disbursements/:id/approval-pdf`, o `/api/admin/disbursements/:id/approval-pdf` para el personal) existe solo para solicitudes **aprobadas** (o más avanzadas). Se genera con PDFKit usando los logos de `assets/brand/`. Solo imprime los últimos 4 dígitos de la cuenta y de la cédula.
-- El **código de verificación** es un HMAC (con `JWT_SECRET`) del número, monto, moneda, fecha de aprobación y cliente; el QR apunta a `${PUBLIC_SITE_URL}/verificar`. Define `PUBLIC_SITE_URL` (y, si quieres, `APP_TIMEZONE`) en producción.
+- El superadmin prepara el documento en `PUT /api/admin/disbursements/:id/approval-document` y lo habilita con `POST …/release` (o lo retira con `…/withdraw`). El cliente descarga con `GET /api/disbursements/:id/approval-pdf` solo si está habilitado; el personal puede descargar un **borrador** sellado en `/api/admin/disbursements/:id/approval-pdf`. Existe solo para solicitudes **aprobadas** (o más avanzadas). Se genera con PDFKit usando los logos de `assets/brand/`. Solo imprime los últimos 4 dígitos de la cuenta y de la cédula.
+- El **código de verificación** es un HMAC (con `JWT_SECRET`) del número, monto, moneda, fecha de aprobación, cliente **y todos los datos del documento**: si el superadmin cambia cualquiera, los PDF descargados antes dejan de verificarse. Un borrador nunca se verifica; el QR apunta a `${PUBLIC_SITE_URL}/verificar`. Define `PUBLIC_SITE_URL` en producción. El despacho está en **Miami**: las fechas usan `America/New_York` (`APP_TIMEZONE`) y el lugar de emisión por defecto es «Miami, Florida, EE. UU.» (`DOC_ISSUE_PLACE`).
 - **Los textos del PDF (condiciones y encabezados) son una redacción general: que los revise tu asesor jurídico** antes de usarlos con clientes.
 - Documentos del despacho: `POST /api/admin/clients/:id/issued-documents` (multipart, solo superadmin) y `GET /api/issued-documents` para el cliente.
 
@@ -120,7 +126,7 @@ npm test                      # TEST_DATABASE_URL para usar otra
 npm run typecheck
 ```
 
-82 pruebas e2e contra PostgreSQL real (auth, RBAC, cifrado, documentos, desembolsos, casos, inversiones, contenido del sitio, PDF de aprobación, documentos del despacho, editor de imágenes, SSE) y pruebas puras de las fórmulas.
+94 pruebas e2e contra PostgreSQL real (auth, RBAC, cifrado, documentos, desembolsos, casos, inversiones, contenido del sitio, PDF de aprobación, documentos del despacho, editor de imágenes, gestión de clientes, SSE) y pruebas puras de las fórmulas.
 
 ## Despliegue
 

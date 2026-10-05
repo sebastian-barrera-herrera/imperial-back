@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role, User, UserStatus } from '@prisma/client';
@@ -64,7 +64,12 @@ export class AuthService {
   async login(dto: LoginDto, res: Response) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     const valid = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
-    if (!user || !valid || user.status !== UserStatus.ACTIVE) {
+    if (user && valid && user.status !== UserStatus.ACTIVE) {
+      // Solo quien acierta la contraseña llega aquí, así que no se revela qué correos existen.
+      await this.audit.log({ actor: user, action: 'LOGIN_BLOCKED', entity: 'User', entityId: user.id, metadata: { status: user.status } });
+      throw new ForbiddenException('Tu acceso a la plataforma fue desactivado. Comunícate con el despacho.');
+    }
+    if (!user || !valid) {
       await this.audit.log({ actor: null, action: 'LOGIN_FAILED', entity: 'User', metadata: { email: dto.email } });
       throw new UnauthorizedException('Correo o contraseña incorrectos');
     }

@@ -6,6 +6,7 @@ import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { CasesModule } from './cases/cases.module';
+import { ClientsAdminModule } from './clients-admin/clients-admin.module';
 import { CommonModule } from './common/common.module';
 import { ContentModule } from './content/content.module';
 import { JwtAuthGuard, RolesGuard } from './common/guards';
@@ -47,6 +48,7 @@ import { UsersModule } from './users/users.module';
     ReportsModule,
     ContentModule,
     IssuedDocumentsModule,
+    ClientsAdminModule,
     StudioModule,
     AdminModule,
   ],

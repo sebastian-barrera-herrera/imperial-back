@@ -102,20 +102,28 @@ model User {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  profile       Profile?
-  preference    NotificationPreference?
-  refreshTokens RefreshToken[]
-  documents     Document[]              @relation("DocumentOwner")
-  reviewedDocs  Document[]              @relation("DocumentReviewer")
-  disbursements DisbursementRequest[]
-  clientCases   Case[]                  @relation("CaseClient")
-  lawyerCases   Case[]                  @relation("CaseLawyer")
-  notifications Notification[]
-  interests     OpportunityInterest[]
-  investments   Investment[]
-  auditLogs     AuditLog[]
-  issuedToMe    IssuedDocument[]        @relation("IssuedTo")
-  issuedByMe    IssuedDocument[]        @relation("IssuedBy")
+  profile            Profile?
+  preference         NotificationPreference?
+  refreshTokens      RefreshToken[]
+  documents          Document[]              @relation("DocumentOwner")
+  reviewedDocs       Document[]              @relation("DocumentReviewer")
+  disbursements      DisbursementRequest[]
+  clientCases        Case[]                  @relation("CaseClient")
+  lawyerCases        Case[]                  @relation("CaseLawyer")
+  notifications      Notification[]
+  interests          OpportunityInterest[]
+  investments        Investment[]
+  auditLogs          AuditLog[]
+  issuedToMe         IssuedDocument[]        @relation("IssuedTo")
+  issuedByMe         IssuedDocument[]        @relation("IssuedBy")
+  deposits           ClientDeposit[]
+  // Asesor profesional (abogado o superadmin) que atiende al cliente; lo ve en su panel.
+  advisorId          String?
+  advisor            User?                   @relation("Advisor", fields: [advisorId], references: [id], onDelete: SetNull)
+  advisees           User[]                  @relation("Advisor")
+  // Baja del cliente: pierde el acceso (status SUSPENDED) pero se conservan sus datos y su historial.
+  deactivatedAt      DateTime?
+  deactivationReason String?
 }
 
 model Profile {
@@ -127,6 +135,7 @@ model Profile {
   phone            String?
   address          String?
   city             String?
+  country          String?
   bankName         String?
   accountType      String?
   accountNumberEnc String?
@@ -191,8 +200,9 @@ model DisbursementRequest {
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
-  events    DisbursementEvent[]
-  documents Document[]
+  events           DisbursementEvent[]
+  documents        Document[]
+  approvalDocument ApprovalDocument?
 
   @@index([clientId])
   @@index([status])
@@ -499,4 +509,45 @@ model StudioVersion {
   createdAt      DateTime    @default(now())
 
   @@unique([imageId, version])
+}
+
+// ───────────── Datos del documento de aprobación (los define el superadmin) ─────────────
+
+model ApprovalDocument {
+  requestId       String              @id
+  request         DisbursementRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  issuerName      String
+  signerName      String?
+  signerTitle     String?
+  financialEntity String
+  accountLast4    String?
+  /// Fecha de solicitud que figura en el documento (no puede ser posterior a la aprobación).
+  requestDate     DateTime            @db.Date
+  issuePlace      String
+  notes           String?
+  /// Mientras sea null el cliente no puede descargarlo; el personal sí (como borrador).
+  releasedAt      DateTime?
+  releasedBy      String?
+  updatedBy       String?
+  updatedAt       DateTime            @updatedAt
+}
+
+// ───────────── Depósitos del cliente (los registra el superadmin) ─────────────
+
+model ClientDeposit {
+  id             String   @id @default(cuid())
+  clientId       String
+  client         User     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  amount         Decimal  @db.Decimal(14, 2)
+  currency       String   @default("USD")
+  depositedAt    DateTime @db.Date
+  /// Referencia bancaria o número de comprobante, para poder conciliarlo con el movimiento real.
+  reference      String?
+  note           String?
+  createdById    String?
+  createdByEmail String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([clientId, depositedAt])
 }

@@ -20,6 +20,9 @@ export class UpdateProfileDto {
   @IsOptional() @Transform(trim) @IsString() @MaxLength(80)
   city?: string;
 
+  @IsOptional() @Transform(trim) @IsString() @MaxLength(60)
+  country?: string;
+
   @IsOptional() @Transform(trim) @IsString() @MaxLength(80)
   bankName?: string;
 
