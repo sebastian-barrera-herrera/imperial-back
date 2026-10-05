@@ -7,6 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "build": "prisma generate && nest build",
     "start": "node dist/main",
     "start:dev": "nest start --watch",

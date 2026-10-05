@@ -29,10 +29,11 @@ API REST de la plataforma de **gestión de casos y recuperación de capital** de
 Requisitos: Node 20+ y Docker (o un PostgreSQL 14+ propio).
 
 ```bash
-npm install
+npm install                             # también genera el cliente de Prisma (postinstall)
 docker compose up -d db                 # PostgreSQL en localhost:5432
 cp .env.example .env                    # funciona tal cual en desarrollo
 npm run prisma:migrate                  # crea el esquema (prisma migrate dev)
+# Si TypeScript dice que '@prisma/client' no exporta UserStatus/Role…: npm run prisma:generate
 
 # Superadmin inicial
 SUPERADMIN_EMAIL=admin@tudespacho.com SUPERADMIN_PASSWORD='UnaClaveLarga123' npm run seed
