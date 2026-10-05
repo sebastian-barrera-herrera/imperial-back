@@ -7,6 +7,7 @@ import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { CasesModule } from './cases/cases.module';
 import { CommonModule } from './common/common.module';
+import { ContentModule } from './content/content.module';
 import { JwtAuthGuard, RolesGuard } from './common/guards';
 import { requestContextMiddleware } from './common/request-context';
 import { validateEnv } from './config/env';
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module';
     CasesModule,
     InvestmentsModule,
     ReportsModule,
+    ContentModule,
     AdminModule,
   ],
   controllers: [HealthController],

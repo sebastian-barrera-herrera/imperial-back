@@ -15,6 +15,7 @@ API REST de la plataforma de **gestión de casos y recuperación de capital** de
 | **Casos** | Etapas, línea de tiempo, documentos requeridos y aislamiento por abogado asignado. |
 | **Alertas** | Centro de notificaciones, preferencias por tipo, tiempo real por SSE, alertas manuales y masivas. |
 | **Capital e inversiones** | Oportunidades con **valor por unidad**, valoraciones, posiciones por cliente, rescates, portafolio con métricas (valor, ganancia, rentabilidad, anualizado, historial, distribución), simulador. |
+| **Contenido del sitio** | El superadmin edita el equipo y los testimonios de la web (textos, nombres, fotos, orden, publicar/ocultar). Cada alta o cambio de identidad exige **confirmar la autorización** de la persona y queda registrado. |
 | **Panel** | Estadísticas, usuarios y roles, reportes CSV, **auditoría**. |
 
 ## Inicio rápido
@@ -66,6 +67,7 @@ Después arranca el front (`imperial-front`) en otra terminal.
 | Alerta a un cliente / alerta masiva | – / – | ✅ / – | ✅ / ✅ |
 | Usuarios y roles, auditoría | – | – | ✅ |
 | Oportunidades, valoraciones, inversiones y rescates | ver y solicitar participar | – | gestionar |
+| Editar el contenido público (equipo, testimonios, fotos) | – | – | ✅ |
 | Reportes CSV de desembolsos, documentos y casos / de usuarios, capital, inversiones y auditoría | – | ✅ / – | ✅ / ✅ |
 
 No se puede cambiar el propio rol ni suspenderse, y siempre queda al menos un superadmin activo.
@@ -73,6 +75,13 @@ No se puede cambiar el propio rol ni suspenderse, y siempre queda al menos un su
 ## Inversiones y métricas
 
 Cada oportunidad nace con un **valor por unidad de 100.0000**. El superadmin registra valoraciones (fecha + valor), registra la inversión de un cliente (las unidades = capital ÷ valor vigente en la fecha de inversión) y puede rescatarla al valor vigente. Las fórmulas (valor actual, ganancia, rentabilidad, anualizado solo con 30+ días, historial, estadísticas tipo cotización) están en `src/investments/metrics.ts` con pruebas. Son cifras **informativas**: la contabilidad oficial es la del despacho.
+
+## Contenido del sitio
+
+- `GET /api/public/content` (sin sesión) devuelve lo **publicado**; una sección sin filas devuelve `null` y la web usa su contenido de respaldo.
+- Administración en `/api/admin/content/*` (solo superadmin): perfiles del equipo, testimonios, orden, fotos y carga del contenido de ejemplo (`POST /samples`).
+- **Autorización registrada:** crear un perfil o testimonio, cambiar la cita, el nombre o la foto, o reemplazar un ejemplo exige `authorized: true` (quién y cuándo queda guardado). Los ejemplos se publican rotulados como ilustrativos hasta que se reemplazan.
+- Fotos: JPG, PNG o WebP reales (se detectan por los primeros bytes; **sin SVG**), máx. 5 MB. Una foto solo es pública mientras la use un elemento publicado; al reemplazar o eliminar se borra si nadie más la usa, y las subidas que nunca se asocian se limpian a las 24 h.
 
 ## Seguridad
 
@@ -93,7 +102,7 @@ npm test                      # TEST_DATABASE_URL para usar otra
 npm run typecheck
 ```
 
-31 pruebas e2e contra PostgreSQL real (auth, RBAC, cifrado, documentos, desembolsos, casos, inversiones, SSE) y pruebas puras de las fórmulas.
+43 pruebas e2e contra PostgreSQL real (auth, RBAC, cifrado, documentos, desembolsos, casos, inversiones, contenido del sitio, SSE) y pruebas puras de las fórmulas.
 
 ## Despliegue
 

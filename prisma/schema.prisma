@@ -372,3 +372,56 @@ model AuditLog {
   @@index([createdAt])
   @@index([entity, entityId])
 }
+
+// ───────────── Contenido público del sitio (equipo y testimonios) ─────────────
+
+/// Foto subida desde el panel (se guarda en el almacenamiento; aquí solo los metadatos).
+model ContentImage {
+  id           String        @id @default(cuid())
+  key          String
+  mime         String
+  size         Int
+  uploadedById String?
+  createdAt    DateTime      @default(now())
+  teamMembers  TeamMember[]
+  testimonials Testimonial[]
+}
+
+model TeamMember {
+  id           String        @id @default(cuid())
+  name         String
+  role         String
+  bio          String
+  photoId      String?
+  photo        ContentImage? @relation(fields: [photoId], references: [id], onDelete: SetNull)
+  sortOrder    Int           @default(0)
+  published    Boolean       @default(true)
+  /// Contenido de ejemplo: se rotula como ilustrativo en la web hasta que se reemplace por datos reales.
+  isSample     Boolean       @default(false)
+  /// Quién y cuándo confirmó que la persona es real y autorizó publicar su nombre/foto.
+  authorizedAt DateTime?
+  authorizedBy String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([sortOrder])
+}
+
+model Testimonial {
+  id           String        @id @default(cuid())
+  quote        String
+  author       String
+  kind         String
+  photoId      String?
+  photo        ContentImage? @relation(fields: [photoId], references: [id], onDelete: SetNull)
+  sortOrder    Int           @default(0)
+  published    Boolean       @default(true)
+  isSample     Boolean       @default(false)
+  /// Autorización escrita de quien da el testimonio para publicar su opinión, nombre y foto.
+  authorizedAt DateTime?
+  authorizedBy String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([sortOrder])
+}
