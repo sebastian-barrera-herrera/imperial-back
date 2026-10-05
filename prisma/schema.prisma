@@ -1,0 +1,374 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPERADMIN
+  LAWYER
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum DocumentCategory {
+  IDENTITY
+  BANKING
+  LEGAL
+  RECEIPT
+}
+
+enum DocumentStatus {
+  PENDING
+  VALIDATED
+  REJECTED
+}
+
+enum DisbursementStatus {
+  PENDING
+  APPROVED
+  IN_PROCESS
+  DISBURSED
+  REJECTED
+  CANCELLED
+}
+
+enum CaseStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CLIENT
+  CLOSED
+}
+
+enum CaseStage {
+  INTAKE
+  DOCUMENT_REVIEW
+  LEGAL_ANALYSIS
+  NEGOTIATION
+  RECOVERY
+  DISBURSEMENT
+  CLOSED
+}
+
+enum NotificationType {
+  DOCUMENT
+  DISBURSEMENT
+  CASE
+  OPPORTUNITY
+  SYSTEM
+}
+
+enum OpportunityStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum InvestmentStatus {
+  ACTIVE
+  REDEEMED
+}
+
+enum InterestStatus {
+  PENDING
+  CONTACTED
+  DISCARDED
+}
+
+model User {
+  id                String     @id @default(cuid())
+  email             String     @unique
+  passwordHash      String
+  fullName          String
+  role              Role       @default(CLIENT)
+  status            UserStatus @default(ACTIVE)
+  lastLoginAt       DateTime?
+  // Consentimiento de privacidad: cuándo y qué versión del aviso/política aceptó (null para cuentas creadas por el personal).
+  privacyAcceptedAt DateTime?
+  privacyVersion    String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  profile       Profile?
+  preference    NotificationPreference?
+  refreshTokens RefreshToken[]
+  documents     Document[]              @relation("DocumentOwner")
+  reviewedDocs  Document[]              @relation("DocumentReviewer")
+  disbursements DisbursementRequest[]
+  clientCases   Case[]                  @relation("CaseClient")
+  lawyerCases   Case[]                  @relation("CaseLawyer")
+  notifications Notification[]
+  interests     OpportunityInterest[]
+  investments   Investment[]
+  auditLogs     AuditLog[]
+}
+
+model Profile {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cedulaEnc        String?
+  cedulaHash       String?  @unique
+  phone            String?
+  address          String?
+  city             String?
+  bankName         String?
+  accountType      String?
+  accountNumberEnc String?
+  accountLast4     String?
+  updatedAt        DateTime @updatedAt
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Document {
+  id              String               @id @default(cuid())
+  ownerId         String
+  owner           User                 @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  category        DocumentCategory
+  originalName    String
+  storageKey      String               @unique
+  mimeType        String
+  size            Int
+  sha256          String
+  status          DocumentStatus       @default(PENDING)
+  rejectionReason String?
+  reviewedById    String?
+  reviewedBy      User?                @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  disbursementId  String?
+  disbursement    DisbursementRequest? @relation(fields: [disbursementId], references: [id], onDelete: SetNull)
+  caseId          String?
+  case            Case?                @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  createdAt       DateTime             @default(now())
+
+  @@index([ownerId, category])
+  @@index([status])
+}
+
+model DisbursementRequest {
+  id           String             @id @default(cuid())
+  code         String             @unique
+  clientId     String
+  client       User               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  caseId       String?
+  case         Case?              @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  amount       Decimal            @db.Decimal(14, 2)
+  currency     String             @default("USD")
+  concept      String
+  bankName     String?
+  accountLast4 String?
+  status       DisbursementStatus @default(PENDING)
+  adminNote    String?
+  disbursedAt  DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  events    DisbursementEvent[]
+  documents Document[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+model DisbursementEvent {
+  id         String              @id @default(cuid())
+  requestId  String
+  request    DisbursementRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromStatus DisbursementStatus?
+  toStatus   DisbursementStatus
+  note       String?
+  actorId    String?
+  actorName  String?
+  createdAt  DateTime            @default(now())
+
+  @@index([requestId])
+}
+
+model Case {
+  id            String     @id @default(cuid())
+  number        String     @unique
+  clientId      String
+  client        User       @relation("CaseClient", fields: [clientId], references: [id], onDelete: Cascade)
+  lawyerId      String?
+  lawyer        User?      @relation("CaseLawyer", fields: [lawyerId], references: [id], onDelete: SetNull)
+  title         String
+  description   String?
+  status        CaseStatus @default(OPEN)
+  stage         CaseStage  @default(INTAKE)
+  amountClaimed Decimal?   @db.Decimal(14, 2)
+  currency      String     @default("USD")
+  nextSteps     String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  requirements  CaseRequirement[]
+  events        CaseEvent[]
+  documents     Document[]
+  disbursements DisbursementRequest[]
+
+  @@index([clientId])
+  @@index([lawyerId])
+}
+
+model CaseRequirement {
+  id       String           @id @default(cuid())
+  caseId   String
+  case     Case             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  label    String
+  category DocumentCategory
+}
+
+model CaseEvent {
+  id          String    @id @default(cuid())
+  caseId      String
+  case        Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  stage       CaseStage
+  title       String
+  description String?
+  actorName   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([caseId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+}
+
+model NotificationPreference {
+  id            String  @id @default(cuid())
+  userId        String  @unique
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents     Boolean @default(true)
+  disbursements Boolean @default(true)
+  cases         Boolean @default(true)
+  opportunities Boolean @default(true)
+  email         Boolean @default(false)
+}
+
+model InvestmentOpportunity {
+  id         String            @id @default(cuid())
+  title      String
+  summary    String
+  terms      String
+  minAmount  Decimal           @db.Decimal(14, 2)
+  maxAmount  Decimal?          @db.Decimal(14, 2)
+  annualRate Decimal           @db.Decimal(6, 3)
+  termMonths Int
+  risk       RiskLevel         @default(MEDIUM)
+  status     OpportunityStatus @default(DRAFT)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  interests   OpportunityInterest[]
+  valuations  OpportunityValuation[]
+  investments Investment[]
+}
+
+/// Valor por unidad (tipo cotización) de una oportunidad en una fecha. La primera valoración (100.0000) marca el inicio.
+model OpportunityValuation {
+  id            String                @id @default(cuid())
+  opportunityId String
+  opportunity   InvestmentOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  date          DateTime              @db.Date
+  unitValue     Decimal               @db.Decimal(14, 4)
+  note          String?
+  createdAt     DateTime              @default(now())
+
+  @@unique([opportunityId, date])
+  @@index([opportunityId, date])
+}
+
+/// Posición de un cliente: capital aportado, unidades compradas al valor unitario de la fecha de inversión.
+model Investment {
+  id            String                @id @default(cuid())
+  code          String                @unique
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunityId String
+  opportunity   InvestmentOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Restrict)
+  amount        Decimal               @db.Decimal(14, 2)
+  units         Decimal               @db.Decimal(18, 6)
+  unitCost      Decimal               @db.Decimal(14, 4)
+  investedAt    DateTime              @db.Date
+  status        InvestmentStatus      @default(ACTIVE)
+  redeemedAt    DateTime?             @db.Date
+  redeemedValue Decimal?              @db.Decimal(14, 2)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([opportunityId])
+}
+
+model OpportunityInterest {
+  id            String                @id @default(cuid())
+  opportunityId String
+  opportunity   InvestmentOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Decimal               @db.Decimal(14, 2)
+  message       String?
+  status        InterestStatus        @default(PENDING)
+  createdAt     DateTime              @default(now())
+
+  @@index([opportunityId])
+  @@index([userId])
+}
+
+model Counter {
+  key   String @id
+  value Int    @default(0)
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail String?
+  action     String
+  entity     String
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+}
